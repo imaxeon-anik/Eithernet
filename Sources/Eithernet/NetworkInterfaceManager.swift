@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 final class NetworkInterfaceManager: ObservableObject {
     @Published var interfaces: [NetworkInterface] = []
+    @Published var primaryWiredIPv4: String?
     @Published var isBusy = false
     @Published var statusMessage: String?
 
@@ -108,6 +109,9 @@ final class NetworkInterfaceManager: ObservableObject {
                 }
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
+            primaryWiredIPv4 = interfaces
+                .first(where: { $0.kind == .wired && $0.isEnabled })
+                .flatMap { NetworkAddress.ipv4(for: $0.device) }
         } catch {
             statusMessage = error.localizedDescription
         }

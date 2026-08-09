@@ -7,8 +7,8 @@ struct MenuBarView: View {
     @State private var password = ""
 
     private let panelWidth: CGFloat = 320
-    private let panelHeight: CGFloat = 460
-    private let networkListHeight: CGFloat = 220
+    private let panelHeight: CGFloat = 530
+    private let networkListHeight: CGFloat = 200
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -74,6 +74,16 @@ struct MenuBarView: View {
                     .lineLimit(2)
             }
 
+            Button(action: openWiFiSettings) {
+                settingsRow(title: "Wi‑Fi Settings…", systemImage: "wifi")
+            }
+            .buttonStyle(.plain)
+
+            SettingsLink {
+                settingsRow(title: "Eithernet Settings…", systemImage: "gearshape")
+            }
+            .buttonStyle(.plain)
+
             HStack(spacing: 8) {
                 Button {
                     networkManager.refresh()
@@ -125,7 +135,8 @@ struct MenuBarView: View {
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             if wifiManager.isScanning || wifiManager.isConnecting || networkManager.isBusy {
@@ -140,9 +151,15 @@ struct MenuBarView: View {
             return "Password for \(ssid)"
         }
         if let ssid = wifiManager.currentSSID, !ssid.isEmpty {
+            if let ip = wifiManager.currentIPv4 {
+                return "Connected to \(ssid) · \(ip)"
+            }
             return "Connected to \(ssid)"
         }
         if networkManager.wiredInterfaces.contains(where: \.isEnabled) {
+            if let ip = networkManager.primaryWiredIPv4 {
+                return "Wired · \(ip)"
+            }
             return "Wired active"
         }
         return "Choose a network"
@@ -303,5 +320,39 @@ struct MenuBarView: View {
         let value = password
         password = ""
         wifiManager.connectWithPassword(value)
+    }
+
+    private func openWiFiSettings() {
+        let candidates = [
+            "x-apple.systempreferences:com.apple.Network-Settings.extension?Wi-Fi",
+            "x-apple.systempreferences:com.apple.wifi-settings-extension",
+            "x-apple.systempreferences:com.apple.preference.network?Wi-Fi",
+        ]
+        for candidate in candidates {
+            if let url = URL(string: candidate), NSWorkspace.shared.open(url) {
+                return
+            }
+        }
+    }
+
+    private func settingsRow(title: String, systemImage: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            Text(title)
+                .foregroundStyle(.primary)
+            Spacer(minLength: 4)
+            Image(systemName: "arrow.up.right")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.white.opacity(0.06))
+        )
     }
 }

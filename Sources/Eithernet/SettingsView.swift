@@ -2,9 +2,28 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var networkManager: NetworkInterfaceManager
+    @State private var launchAtLogin = LaunchAtLogin.isEnabled
+    @State private var launchAtLoginMessage: String?
 
     var body: some View {
         Form {
+            Section("General") {
+                Toggle("Launch at Login", isOn: launchAtLoginBinding)
+                if LaunchAtLogin.needsApproval {
+                    Text("Pending approval in System Settings → General → Login Items.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Open Login Items…") {
+                        LaunchAtLogin.openLoginItemsSettings()
+                    }
+                }
+                if let launchAtLoginMessage {
+                    Text(launchAtLoginMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Wired") {
                 if networkManager.wiredInterfaces.isEmpty {
                     Text("None found")
@@ -34,10 +53,29 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 380, height: 280)
+        .frame(width: 400, height: 340)
         .onAppear {
+            launchAtLogin = LaunchAtLogin.isEnabled
             networkManager.refresh()
         }
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLogin },
+            set: { newValue in
+                do {
+                    try LaunchAtLogin.setEnabled(newValue)
+                    launchAtLogin = LaunchAtLogin.isEnabled
+                    launchAtLoginMessage = LaunchAtLogin.needsApproval
+                        ? "Turned on — approve Eithernet under Login Items if prompted."
+                        : nil
+                } catch {
+                    launchAtLogin = LaunchAtLogin.isEnabled
+                    launchAtLoginMessage = error.localizedDescription
+                }
+            }
+        )
     }
 
     private func statusText(for interface: NetworkInterface) -> String {

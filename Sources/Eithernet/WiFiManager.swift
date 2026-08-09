@@ -6,6 +6,7 @@ import Foundation
 final class WiFiManager: NSObject, ObservableObject {
     @Published var networks: [WiFiNetwork] = []
     @Published var currentSSID: String?
+    @Published var currentIPv4: String?
     @Published var isScanning = false
     @Published var isConnecting = false
     @Published var statusMessage: String?
@@ -83,6 +84,7 @@ final class WiFiManager: NSObject, ObservableObject {
                 try Self.scanNetworks()
             }.value
             currentSSID = result.currentSSID
+            currentIPv4 = result.ipv4
             networks = result.networks
             if locationDenied == false {
                 statusMessage = nil
@@ -90,6 +92,7 @@ final class WiFiManager: NSObject, ObservableObject {
         } catch {
             statusMessage = error.localizedDescription
             networks = []
+            currentIPv4 = nil
         }
     }
 
@@ -117,9 +120,15 @@ final class WiFiManager: NSObject, ObservableObject {
         return interface
     }
 
-    nonisolated private static func scanNetworks() throws -> (currentSSID: String?, networks: [WiFiNetwork]) {
+    nonisolated private static func scanNetworks() throws -> (
+        currentSSID: String?,
+        ipv4: String?,
+        networks: [WiFiNetwork]
+    ) {
         let interface = try wifiInterface()
         let current = interface.ssid()
+        let deviceName = interface.interfaceName
+        let ipv4 = deviceName.flatMap { NetworkAddress.ipv4(for: $0) }
         let scanned = try interface.scanForNetworks(withName: nil)
 
         var bySSID: [String: CWNetwork] = [:]
@@ -149,7 +158,7 @@ final class WiFiManager: NSObject, ObservableObject {
             return lhs.ssid.localizedCaseInsensitiveCompare(rhs.ssid) == .orderedAscending
         }
 
-        return (current, networks)
+        return (current, ipv4, networks)
     }
 
     nonisolated private static func associate(ssid: String, password: String?) throws {

@@ -64,9 +64,18 @@ The workflow lives at `.github/workflows/release.yml`. Builds are currently unsi
 3. Under **Wireless**, toggle Wi‑Fi power and tap a network name to join it.
 4. Use **Refresh** to rescan interfaces and nearby SSIDs.
 
+## Launch at Login
+
+From the menu bar panel: **Eithernet Settings…** → enable **Launch at Login**.
+
+Or manually: System Settings → General → Login Items → add `Eithernet.app`.
+
+macOS may ask you to approve the item under Login Items the first time.
+
 ## Notes
 
 - Interface power uses `/usr/sbin/networksetup`; Wi‑Fi join uses CoreWLAN.
 - Listing nearby networks requires **Location** permission (macOS privacy rule for Wi‑Fi scans).
 - Wired detection looks for hardware ports named like Ethernet / LAN.
 - Disabling a service may require elevated privileges depending on your Mac’s configuration.
+- Launch at Login uses `SMAppService` and works from the packaged `.app` (not `swift run` debug builds).
