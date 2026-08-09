@@ -1,12 +1,13 @@
 # Eithernet
 
-Menu bar app for macOS that lets you enable or disable **wired** and **wireless** network interfaces from the tray.
+macOS menu bar app to toggle **Ethernet / Wi‑Fi**, join networks, and see your current SSID + IP — from the tray.
 
 ## Requirements
 
 - macOS 14+
 - Xcode / Swift 6 toolchain
 - Permission to change network settings (macOS may prompt; some actions need admin)
+- **Location** permission to list nearby Wi‑Fi networks
 
 ## Build & run
 
@@ -34,14 +35,14 @@ Outputs: `Sources/Eithernet/Resources/menubar-*.png` and `Resources/AppIcon.icns
 ## Package a `.dmg`
 
 ```bash
-./scripts/package-dmg.sh
-open dist/Eithernet-0.1.0.dmg
+VERSION=1.0.0 ./scripts/package-dmg.sh
+open dist/Eithernet-1.0.0.dmg
 ```
 
-Optional version overrides:
+Optional overrides:
 
 ```bash
-VERSION=0.2.0 BUILD=12 ./scripts/package-dmg.sh
+VERSION=1.0.0 BUILD=12 ./scripts/package-dmg.sh
 ```
 
 `LSUIElement` is set so the app stays in the menu bar (no Dock icon).
@@ -51,18 +52,20 @@ VERSION=0.2.0 BUILD=12 ./scripts/package-dmg.sh
 Push a version tag to build a DMG on `macos-15` and attach it to a GitHub Release:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 The workflow lives at `.github/workflows/release.yml`. Builds are currently unsigned (Gatekeeper may warn until you add Apple signing + notarization).
 
 ## Usage
 
-1. Click the Eithernet icon in the menu bar (custom plug/Wi‑Fi glyph; state changes with what’s enabled).
+1. Click the Eithernet icon in the menu bar (state changes with wired / wireless / both / off).
 2. Under **Wired**, toggle any Ethernet / LAN adapters.
 3. Under **Wireless**, toggle Wi‑Fi power and tap a network name to join it.
-4. Use **Refresh** to rescan interfaces and nearby SSIDs.
+4. Check the header for connected SSID and IPv4.
+5. Use **Wi‑Fi Settings…** or **Eithernet Settings…** for system Wi‑Fi prefs and app options (including Launch at Login).
+6. Use **Refresh** to rescan interfaces and nearby SSIDs.
 
 ## Launch at Login
 

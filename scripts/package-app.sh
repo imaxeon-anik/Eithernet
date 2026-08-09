@@ -9,8 +9,8 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-# Optional overrides for CI / releases (e.g. VERSION=0.1.0 BUILD=42)
-VERSION="${VERSION:-0.1.0}"
+# Optional overrides for CI / releases (e.g. VERSION=1.0.0 BUILD=42)
+VERSION="${VERSION:-1.0.0}"
 VERSION="${VERSION#v}"
 BUILD="${BUILD:-1}"
 
