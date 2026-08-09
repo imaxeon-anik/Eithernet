@@ -19,9 +19,16 @@ swift build -c release
 
 BIN_PATH="$(swift build -c release --show-bin-path)/$APP_NAME"
 
+ICON_SRC="$ROOT_DIR/Resources/AppIcon.icns"
+if [[ ! -f "$ICON_SRC" ]]; then
+  echo "Missing app icon: $ICON_SRC" >&2
+  exit 1
+fi
+
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BIN_PATH" "$MACOS_DIR/$APP_NAME"
+cp "$ICON_SRC" "$RESOURCES_DIR/AppIcon.icns"
 
 cat > "$CONTENTS_DIR/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -32,6 +39,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
 	<string>en</string>
 	<key>CFBundleExecutable</key>
 	<string>Eithernet</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.eithernet.app</string>
 	<key>CFBundleInfoDictionaryVersion</key>

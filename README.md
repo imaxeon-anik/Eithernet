@@ -23,6 +23,8 @@ swift run
 open dist/Eithernet.app
 ```
 
+App icon source: `Design/icons/eithernet-icon-both.png` → `Resources/AppIcon.icns`.
+
 ## Package a `.dmg`
 
 ```bash
