@@ -23,7 +23,31 @@ swift run
 open dist/Eithernet.app
 ```
 
+## Package a `.dmg`
+
+```bash
+./scripts/package-dmg.sh
+open dist/Eithernet-0.1.0.dmg
+```
+
+Optional version overrides:
+
+```bash
+VERSION=0.2.0 BUILD=12 ./scripts/package-dmg.sh
+```
+
 `LSUIElement` is set so the app stays in the menu bar (no Dock icon).
+
+## Release (GitHub Actions)
+
+Push a version tag to build a DMG on `macos-15` and attach it to a GitHub Release:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow lives at `.github/workflows/release.yml`. Builds are currently unsigned (Gatekeeper may warn until you add Apple signing + notarization).
 
 ## Usage
 
