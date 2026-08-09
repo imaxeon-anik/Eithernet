@@ -25,10 +25,18 @@ if [[ ! -f "$ICON_SRC" ]]; then
   exit 1
 fi
 
+BIN_DIR="$(dirname "$BIN_PATH")"
+RESOURCE_BUNDLE="$BIN_DIR/Eithernet_Eithernet.bundle"
+
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$BIN_PATH" "$MACOS_DIR/$APP_NAME"
 cp "$ICON_SRC" "$RESOURCES_DIR/AppIcon.icns"
+
+# SPM embeds menu-bar icon assets in a resource bundle beside the executable.
+if [[ -d "$RESOURCE_BUNDLE" ]]; then
+  cp -R "$RESOURCE_BUNDLE" "$MACOS_DIR/"
+fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -59,6 +67,10 @@ cat > "$CONTENTS_DIR/Info.plist" <<EOF
 	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Eithernet needs Location access to scan and list nearby Wi‑Fi networks.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>Eithernet needs Location access to scan and list nearby Wi‑Fi networks.</string>
 </dict>
 </plist>
 EOF

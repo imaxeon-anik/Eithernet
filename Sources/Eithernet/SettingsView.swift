@@ -29,7 +29,7 @@ struct SettingsView: View {
 
             Section("About") {
                 LabeledContent("App", value: "Eithernet")
-                Text("Choose wired or wireless interfaces from the menu bar.")
+                Text("Toggle interfaces and join Wi‑Fi networks from the menu bar. Location access is required to list nearby networks.")
                     .foregroundStyle(.secondary)
             }
         }

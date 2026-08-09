@@ -9,7 +9,14 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Eithernet",
-            path: "Sources/Eithernet"
+            path: "Sources/Eithernet",
+            resources: [
+                .process("Resources")
+            ],
+            linkerSettings: [
+                .linkedFramework("CoreWLAN"),
+                .linkedFramework("CoreLocation")
+            ]
         )
     ]
 )

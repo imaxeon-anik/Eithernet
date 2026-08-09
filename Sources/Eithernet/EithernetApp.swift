@@ -3,12 +3,16 @@ import SwiftUI
 @main
 struct EithernetApp: App {
     @StateObject private var networkManager = NetworkInterfaceManager()
+    @StateObject private var wifiManager = WiFiManager()
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarView(networkManager: networkManager)
+            MenuBarView(networkManager: networkManager, wifiManager: wifiManager)
         } label: {
-            Label("Eithernet", systemImage: networkManager.statusSymbolName)
+            Image(nsImage: networkManager.statusIcon.nsImage)
+                .renderingMode(.template)
+                .frame(width: 20, height: 20)
+                .accessibilityLabel("Eithernet")
         }
         .menuBarExtraStyle(.window)
 

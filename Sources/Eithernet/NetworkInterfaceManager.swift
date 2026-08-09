@@ -15,18 +15,18 @@ final class NetworkInterfaceManager: ObservableObject {
         interfaces.filter { $0.kind == .wireless }
     }
 
-    var statusSymbolName: String {
+    var statusIcon: MenuBarIcon {
         let wiredOn = wiredInterfaces.contains(where: \.isEnabled)
         let wirelessOn = wirelessInterfaces.contains(where: \.isEnabled)
         switch (wirelessOn, wiredOn) {
         case (true, true):
-            return "network"
+            return .both
         case (false, true):
-            return "cable.connector"
+            return .wired
         case (true, false):
-            return "wifi"
+            return .wireless
         case (false, false):
-            return "network.slash"
+            return .off
         }
     }
 

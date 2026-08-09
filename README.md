@@ -23,7 +23,13 @@ swift run
 open dist/Eithernet.app
 ```
 
-App icon source: `Design/icons/eithernet-icon-both.png` → `Resources/AppIcon.icns`.
+Icons are generated (SF Symbols–like menu-bar templates + app icon):
+
+```bash
+./scripts/generate-icons.swift
+```
+
+Outputs: `Sources/Eithernet/Resources/menubar-*.png` and `Resources/AppIcon.icns`.
 
 ## Package a `.dmg`
 
@@ -53,14 +59,14 @@ The workflow lives at `.github/workflows/release.yml`. Builds are currently unsi
 
 ## Usage
 
-1. Click the Eithernet icon in the menu bar.
+1. Click the Eithernet icon in the menu bar (custom plug/Wi‑Fi glyph; state changes with what’s enabled).
 2. Under **Wired**, toggle any Ethernet / LAN adapters.
-3. Under **Wireless**, toggle Wi‑Fi interfaces.
-4. Use **Refresh** if interfaces change (cable plugged/unplugged).
+3. Under **Wireless**, toggle Wi‑Fi power and tap a network name to join it.
+4. Use **Refresh** to rescan interfaces and nearby SSIDs.
 
 ## Notes
 
-- Uses `/usr/sbin/networksetup` under the hood.
-- List items are network interfaces/services (not Wi‑Fi SSIDs).
+- Interface power uses `/usr/sbin/networksetup`; Wi‑Fi join uses CoreWLAN.
+- Listing nearby networks requires **Location** permission (macOS privacy rule for Wi‑Fi scans).
 - Wired detection looks for hardware ports named like Ethernet / LAN.
 - Disabling a service may require elevated privileges depending on your Mac’s configuration.
