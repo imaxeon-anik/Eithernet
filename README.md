@@ -2,6 +2,16 @@
 
 macOS menu bar app to toggle **Ethernet / Wi‑Fi**, join networks, and see your current SSID + IP — from the tray.
 
+<p align="center">
+  <img src="docs/screenshots/menu-both-on.png" alt="Eithernet menu bar panel — wired and wireless controls" width="360" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/tray-states.png" alt="Menu bar icon states: wired, wireless, both, and off" width="480" />
+</p>
+
+<p align="center"><sub>Tray icon states — Wired · Wireless · Both · Off</sub></p>
+
 ## Requirements
 
 - macOS 14+
