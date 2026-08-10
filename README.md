@@ -82,3 +82,7 @@ macOS may ask you to approve the item under Login Items the first time.
 - Wired detection looks for hardware ports named like Ethernet / LAN.
 - Disabling a service may require elevated privileges depending on your Mac’s configuration.
 - Launch at Login uses `SMAppService` and works from the packaged `.app` (not `swift run` debug builds).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
