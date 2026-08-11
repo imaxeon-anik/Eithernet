@@ -12,12 +12,45 @@ macOS menu bar app to toggle **Ethernet / Wi‑Fi**, join networks, and see your
 
 <p align="center"><sub>Tray icon states — Wired · Wireless · Both · Off</sub></p>
 
+## Install
+
+Eithernet is free and open source (MIT). Releases are **unsigned** and **not notarized** — macOS Gatekeeper will warn on first open. That is expected for now.
+
+### From GitHub Releases
+
+1. Download `Eithernet-*.dmg` from [Releases](https://github.com/imaxeon-anik/Eithernet/releases).
+2. Open the DMG and drag **Eithernet** into **Applications**.
+3. First launch: right-click the app → **Open** → **Open**.  
+   Or: System Settings → Privacy & Security → **Open Anyway**.
+4. If macOS still blocks it:
+
+```bash
+xattr -cr /Applications/Eithernet.app
+```
+
+Then open the app again (right-click → Open if needed).
+
+### Homebrew
+
+```bash
+brew tap imaxeon-anik/eithernet
+brew install --cask eithernet
+```
+
+Tap: [imaxeon-anik/homebrew-eithernet](https://github.com/imaxeon-anik/homebrew-eithernet). Gatekeeper steps above still apply — Homebrew does not notarize the app.
+
+### Privacy
+
+- No telemetry or analytics.
+- Runs entirely on your Mac.
+- **Location** is requested only so macOS allows nearby Wi‑Fi scans (Apple’s privacy rule) — the app does not track you.
+
 ## Requirements
 
 - macOS 14+
-- Xcode / Swift 6 toolchain
 - Permission to change network settings (macOS may prompt; some actions need admin)
 - **Location** permission to list nearby Wi‑Fi networks
+- Xcode / Swift 6 toolchain (only if building from source)
 
 ## Build & run
 
@@ -66,7 +99,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-The workflow lives at `.github/workflows/release.yml`. Builds are currently unsigned (Gatekeeper may warn until you add Apple signing + notarization).
+The workflow lives at `.github/workflows/release.yml`. Builds are unsigned; see [Install](#install) for Gatekeeper steps.
 
 ## Usage
 
