@@ -7,7 +7,6 @@ struct MenuBarView: View {
     @ObservedObject var panelState: MenuBarPanelState
 
     private let panelWidth: CGFloat = 320
-    private let panelHeight: CGFloat = 548
     private let networkListHeight: CGFloat = 200
 
     var body: some View {
@@ -19,6 +18,10 @@ struct MenuBarView: View {
                     sectionLabel("Wired")
                     interfaceList(networkManager.wiredInterfaces)
                 }
+            }
+
+            if panelState.networkDetailSSID != nil {
+                networkDetailBackButton
             }
 
             GlassCard {
@@ -81,39 +84,47 @@ struct MenuBarView: View {
                     .lineLimit(2)
             }
 
-            Button(action: openWiFiSettings) {
-                settingsRow(title: "Wi‑Fi Settings…", systemImage: "wifi")
-            }
-            .buttonStyle(.plain)
+            HStack(spacing: 8) {
+                Button(action: openWiFiSettings) {
+                    settingsCell(title: "Wi‑Fi Settings…", systemImage: "wifi")
+                }
+                .buttonStyle(.plain)
 
-            SettingsLink {
-                settingsRow(title: "Eithernet Settings…", systemImage: "gearshape")
+                SettingsLink {
+                    settingsCell(title: "Eithernet Settings…", systemImage: "gearshape")
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             HStack(spacing: 8) {
                 Button {
                     Task { await refreshInterfacesAndPanelNetworks() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
+                        .labelStyle(.iconOnly)
                 }
                 .keyboardShortcut("r")
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .help("Refresh")
 
                 Spacer()
 
-                Button("Quit") {
+                Button {
                     NSApplication.shared.terminate(nil)
+                } label: {
+                    Label("Quit", systemImage: "power")
+                        .labelStyle(.iconOnly)
                 }
                 .keyboardShortcut("q")
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
                 .controlSize(.small)
-                .foregroundStyle(.secondary)
+                .help("Quit Eithernet")
             }
         }
         .padding(14)
-        .frame(width: panelWidth, height: panelHeight, alignment: .top)
+        .frame(width: panelWidth)
+        .fixedSize(horizontal: false, vertical: true)
         .background(GlassBackdrop())
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
@@ -309,10 +320,28 @@ struct MenuBarView: View {
         )
     }
 
+    private var networkDetailBackButton: some View {
+        Button {
+            panelState.networkDetailSSID = nil
+        } label: {
+            HStack(spacing: 2) {
+                Image(systemName: "chevron.left")
+                    .font(.subheadline.weight(.semibold))
+                Text("Back")
+                    .font(.subheadline)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color(nsColor: .linkColor))
+        .keyboardShortcut(.cancelAction)
+        .padding(.leading, 2)
+    }
+
     private func networkDetailPanel(for ssid: String) -> some View {
         let isSaved = wifiManager.currentAutoJoinEnabled != nil
 
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 10) {
             Text("“\(ssid)”")
                 .font(.subheadline.weight(.semibold))
                 .lineLimit(2)
@@ -325,34 +354,27 @@ struct MenuBarView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .disabled(networkRowInteractionDisabled)
+
+                Divider()
+                    .padding(.vertical, 2)
+
+                Button(role: .destructive) {
+                    panelState.ssidPendingForget = ssid
+                } label: {
+                    Text("Forget This Network")
+                        .font(.callout)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(networkRowInteractionDisabled)
             } else {
                 Text("This network isn’t saved on your Mac. Joining with a password will add it to saved networks.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            if isSaved {
-                Button(role: .destructive) {
-                    panelState.ssidPendingForget = ssid
-                } label: {
-                    Label("Forget This Network", systemImage: "trash")
-                        .font(.callout)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(networkRowInteractionDisabled)
-            }
-
-            HStack {
-                Button("Back") {
-                    panelState.networkDetailSSID = nil
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .keyboardShortcut(.cancelAction)
-
-                Spacer()
-            }
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, minHeight: networkListHeight, alignment: .topLeading)
         .onAppear {
@@ -488,21 +510,26 @@ struct MenuBarView: View {
         }
     }
 
-    private func settingsRow(title: String, systemImage: String) -> some View {
-        HStack(spacing: 8) {
+    private func settingsCell(title: String, systemImage: String) -> some View {
+        HStack(spacing: 6) {
             Image(systemName: systemImage)
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .frame(width: 16)
+                .frame(width: 14)
             Text(title)
+                .font(.caption)
                 .foregroundStyle(.primary)
-            Spacer(minLength: 4)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            Spacer(minLength: 0)
             Image(systemName: "arrow.up.right")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 8)
         .padding(.vertical, 8)
-        .contentShape(Rectangle())
+        .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(.white.opacity(0.06))
