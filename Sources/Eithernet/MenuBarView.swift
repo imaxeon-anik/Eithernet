@@ -126,11 +126,12 @@ struct MenuBarView: View {
         .frame(width: panelWidth)
         .fixedSize(horizontal: false, vertical: true)
         .background(GlassBackdrop())
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: MenuBarPanelMetrics.cornerRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: MenuBarPanelMetrics.cornerRadius, style: .continuous)
                 .strokeBorder(.white.opacity(0.20), lineWidth: 0.8)
         )
+        .background(MenuBarPanelWindowRounding())
         // Keep toggles usable while a join is in flight; only block network rows.
         .confirmationDialog(
             "Forget this network?",
