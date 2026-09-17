@@ -4,10 +4,10 @@ import SwiftUI
 struct MenuBarView: View {
     @ObservedObject var networkManager: NetworkInterfaceManager
     @ObservedObject var wifiManager: WiFiManager
-    @State private var password = ""
+    @ObservedObject var panelState: MenuBarPanelState
 
     private let panelWidth: CGFloat = 320
-    private let panelHeight: CGFloat = 530
+    private let panelHeight: CGFloat = 548
     private let networkListHeight: CGFloat = 200
 
     var body: some View {
@@ -35,7 +35,12 @@ struct MenuBarView: View {
                                             .first(where: { $0.id == wifi.id })?
                                             .isEnabled ?? wifi.isEnabled
                                     },
-                                    set: { networkManager.setInterfaceEnabled(wifi, enabled: $0) }
+                                    set: { enabled in
+                                        networkManager.setInterfaceEnabled(wifi, enabled: enabled)
+                                        wifiManager.scheduleDeferredPanelRefreshIfVisible(
+                                            panelState.isMenuPanelVisible
+                                        )
+                                    }
                                 )
                             )
                             .toggleStyle(.switch)
@@ -61,6 +66,8 @@ struct MenuBarView: View {
                         .controlSize(.small)
                     } else if let ssid = wifiManager.pendingPasswordSSID {
                         passwordPanel(for: ssid)
+                    } else if let ssid = panelState.networkDetailSSID {
+                        networkDetailPanel(for: ssid)
                     } else {
                         networksList
                     }
@@ -86,8 +93,7 @@ struct MenuBarView: View {
 
             HStack(spacing: 8) {
                 Button {
-                    networkManager.refresh()
-                    wifiManager.scan()
+                    Task { await refreshInterfacesAndPanelNetworks() }
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -115,19 +121,70 @@ struct MenuBarView: View {
                 .strokeBorder(.white.opacity(0.20), lineWidth: 0.8)
         )
         // Keep toggles usable while a join is in flight; only block network rows.
+        .confirmationDialog(
+            "Forget this network?",
+            isPresented: Binding(
+                get: { panelState.ssidPendingForget != nil },
+                set: { if !$0 { panelState.ssidPendingForget = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: panelState.ssidPendingForget
+        ) { ssid in
+            Button("Forget “\(ssid)”", role: .destructive) {
+                let device = networkManager.wirelessInterfaces.first?.device
+                wifiManager.forgetNetwork(ssid, device: device)
+                panelState.ssidPendingForget = nil
+                panelState.networkDetailSSID = nil
+            }
+            Button("Cancel", role: .cancel) {
+                panelState.ssidPendingForget = nil
+            }
+        } message: { ssid in
+            Text(
+                "Removes “\(ssid)” from saved networks and deletes the stored password. You’ll need to enter the password again to rejoin."
+            )
+        }
+        .onChange(of: wifiManager.currentSSID) { _, newSSID in
+            guard let detail = panelState.networkDetailSSID else { return }
+            if detail != newSSID {
+                panelState.networkDetailSSID = nil
+            }
+        }
+        .onChange(of: wifiManager.isUpdatingAutoJoin) { _, updating in
+            if !updating {
+                panelState.syncDetailAutoJoin(from: wifiManager)
+            }
+        }
+        .onChange(of: wifiManager.currentAutoJoinEnabled) { _, _ in
+            if panelState.networkDetailSSID != nil {
+                panelState.syncDetailAutoJoin(from: wifiManager)
+            }
+        }
         .onAppear {
             // MenuBarExtra windows dismiss easily if the app isn’t active.
             NSApp.activate(ignoringOtherApps: true)
-            networkManager.refresh()
-            wifiManager.prepareAndScan()
+            panelState.isMenuPanelVisible = true
+            Task { await refreshInterfacesAndPanelNetworks() }
         }
+        .onDisappear {
+            panelState.isMenuPanelVisible = false
+        }
+    }
+
+    private func refreshInterfacesAndPanelNetworks() async {
+        await networkManager.refresh()
+        await wifiManager.refreshNetworksForPanel(wifiRadioOn: WiFiManager.wiFiRadioOn())
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(nsImage: networkManager.statusIcon.nsImage)
+            Image(nsImage: networkManager.menuBarIcon.nsImage)
                 .renderingMode(.template)
                 .foregroundStyle(.primary)
+                .frame(
+                    width: networkManager.menuBarIcon.traySize.width,
+                    height: networkManager.menuBarIcon.traySize.height
+                )
 
             VStack(alignment: .leading, spacing: 1) {
                 Text("Eithernet")
@@ -139,7 +196,9 @@ struct MenuBarView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            if wifiManager.isScanning || wifiManager.isConnecting || networkManager.isBusy {
+            if wifiManager.isScanning || wifiManager.isConnecting || wifiManager.isForgetting
+                || wifiManager.isUpdatingAutoJoin || networkManager.isBusy
+            {
                 ProgressView()
                     .controlSize(.small)
             }
@@ -149,6 +208,9 @@ struct MenuBarView: View {
     private var subtitle: String {
         if let ssid = wifiManager.pendingPasswordSSID {
             return "Password for \(ssid)"
+        }
+        if let ssid = panelState.networkDetailSSID {
+            return "Details for \(ssid)"
         }
         if let ssid = wifiManager.currentSSID, !ssid.isEmpty {
             if let ip = wifiManager.currentIPv4 {
@@ -167,8 +229,7 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var networksList: some View {
-        let wifiOn = networkManager.wirelessInterfaces.contains(where: \.isEnabled)
-        if !wifiOn {
+        if !WiFiManager.wiFiRadioOn() {
             Text("Turn Wi‑Fi on to see networks.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
@@ -183,6 +244,10 @@ struct MenuBarView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                } else if !wifiManager.canScanForNetworks {
+                    Text("Waiting for Location permission to scan…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else {
                     Text("No networks found")
                         .font(.caption)
@@ -195,13 +260,7 @@ struct MenuBarView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     ForEach(wifiManager.networks.prefix(16)) { network in
-                        Button {
-                            wifiManager.connect(to: network)
-                        } label: {
-                            networkRow(network)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(network.isCurrent || wifiManager.isConnecting)
+                        networkListRow(network)
                     }
                 }
                 .padding(.trailing, 2)
@@ -212,17 +271,117 @@ struct MenuBarView: View {
         }
     }
 
+    private var networkRowInteractionDisabled: Bool {
+        wifiManager.isConnecting || wifiManager.isForgetting || wifiManager.isUpdatingAutoJoin
+    }
+
+    @ViewBuilder
+    private func networkListRow(_ network: WiFiNetwork) -> some View {
+        HStack(spacing: 4) {
+            Button {
+                wifiManager.connect(to: network)
+            } label: {
+                networkRow(network)
+            }
+            .buttonStyle(.plain)
+            .disabled(network.isCurrent || networkRowInteractionDisabled)
+
+            if network.isCurrent {
+                Button {
+                    panelState.openNetworkDetail(ssid: network.ssid, wifi: wifiManager)
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Network details")
+                .disabled(networkRowInteractionDisabled)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(network.isCurrent ? Color.accentColor.opacity(0.14) : .clear)
+        )
+    }
+
+    private func networkDetailPanel(for ssid: String) -> some View {
+        let isSaved = wifiManager.currentAutoJoinEnabled != nil
+
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("“\(ssid)”")
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+
+            if isSaved {
+                Toggle(isOn: detailAutoJoinBinding(for: ssid)) {
+                    Text("Automatically join this network")
+                        .font(.callout)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .disabled(networkRowInteractionDisabled)
+            } else {
+                Text("This network isn’t saved on your Mac. Joining with a password will add it to saved networks.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if isSaved {
+                Button(role: .destructive) {
+                    panelState.ssidPendingForget = ssid
+                } label: {
+                    Label("Forget This Network", systemImage: "trash")
+                        .font(.callout)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(networkRowInteractionDisabled)
+            }
+
+            HStack {
+                Button("Back") {
+                    panelState.networkDetailSSID = nil
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: networkListHeight, alignment: .topLeading)
+        .onAppear {
+            panelState.syncDetailAutoJoin(from: wifiManager)
+        }
+    }
+
+    private func detailAutoJoinBinding(for ssid: String) -> Binding<Bool> {
+        Binding(
+            get: { panelState.detailAutoJoinEnabled },
+            set: { newValue in
+                guard newValue != panelState.detailAutoJoinEnabled else { return }
+                panelState.detailAutoJoinEnabled = newValue
+                wifiManager.setAutoJoin(newValue, for: ssid)
+            }
+        )
+    }
+
     private func passwordPanel(for ssid: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Join “\(ssid)”")
                 .font(.subheadline.weight(.semibold))
-            SecureField("Password", text: $password)
+            SecureField("Password", text: $panelState.password)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(submitPassword)
             HStack {
                 Button("Cancel") {
                     wifiManager.cancelPasswordPrompt()
-                    password = ""
+                    panelState.password = ""
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -234,7 +393,7 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(password.isEmpty || wifiManager.isConnecting)
+                .disabled(panelState.password.isEmpty || wifiManager.isConnecting)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -262,12 +421,6 @@ struct MenuBarView: View {
             signalIcon(bars: network.signalBars)
                 .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(network.isCurrent ? Color.accentColor.opacity(0.14) : .clear)
-        )
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
@@ -317,8 +470,8 @@ struct MenuBarView: View {
     }
 
     private func submitPassword() {
-        let value = password
-        password = ""
+        let value = panelState.password
+        panelState.password = ""
         wifiManager.connectWithPassword(value)
     }
 

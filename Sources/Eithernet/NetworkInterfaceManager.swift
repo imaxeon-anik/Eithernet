@@ -1,12 +1,40 @@
 import Foundation
 import SwiftUI
 
+extension Notification.Name {
+    /// Posted when CoreWLAN reports Wi‑Fi power/state changes (Control Center, etc.).
+    static let eithernetRequestInterfaceRefresh = Notification.Name("EithernetRequestInterfaceRefresh")
+}
+
 @MainActor
 final class NetworkInterfaceManager: ObservableObject {
     @Published var interfaces: [NetworkInterface] = []
     @Published var primaryWiredIPv4: String?
+    @Published private(set) var menuBarIcon: MenuBarIcon = .off
     @Published var isBusy = false
     @Published var statusMessage: String?
+
+    private var backgroundMonitorTask: Task<Void, Never>?
+    private var externalRefreshObserver: NSObjectProtocol?
+    private var isRefreshing = false
+
+    init() {
+        externalRefreshObserver = NotificationCenter.default.addObserver(
+            forName: .eithernetRequestInterfaceRefresh,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refresh()
+            }
+        }
+        startBackgroundMonitoring()
+        refresh()
+    }
+
+    deinit {
+        backgroundMonitorTask?.cancel()
+    }
 
     var wiredInterfaces: [NetworkInterface] {
         interfaces.filter { $0.kind == .wired }
@@ -35,6 +63,10 @@ final class NetworkInterfaceManager: ObservableObject {
         Task {
             await refreshAsync()
         }
+    }
+
+    func refresh() async {
+        await refreshAsync()
     }
 
     func setInterfaceEnabled(_ interface: NetworkInterface, enabled: Bool) {
@@ -67,7 +99,22 @@ final class NetworkInterfaceManager: ObservableObject {
         }
     }
 
+    private func startBackgroundMonitoring() {
+        backgroundMonitorTask?.cancel()
+        backgroundMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(8))
+                guard !Task.isCancelled else { break }
+                await self?.refreshAsync()
+            }
+        }
+    }
+
     private func refreshAsync() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
         do {
             let hardware = try await runNetworkSetup(["-listallhardwareports"])
             let servicesOutput = try await runNetworkSetup(["-listallnetworkservices"])
@@ -112,6 +159,7 @@ final class NetworkInterfaceManager: ObservableObject {
             primaryWiredIPv4 = interfaces
                 .first(where: { $0.kind == .wired && $0.isEnabled })
                 .flatMap { NetworkAddress.ipv4(for: $0.device) }
+            menuBarIcon = statusIcon
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -191,53 +239,4 @@ final class NetworkInterfaceManager: ObservableObject {
         }
     }
 
-    @discardableResult
-    private func runNetworkSetup(_ arguments: [String]) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
-                process.arguments = arguments
-
-                let stdout = Pipe()
-                let stderr = Pipe()
-                process.standardOutput = stdout
-                process.standardError = stderr
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-
-                    let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-                    let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-                    let out = String(data: outData, encoding: .utf8) ?? ""
-                    let err = String(data: errData, encoding: .utf8) ?? ""
-
-                    if process.terminationStatus == 0 {
-                        continuation.resume(returning: out)
-                    } else {
-                        let message = err.trimmingCharacters(in: .whitespacesAndNewlines)
-                        continuation.resume(
-                            throwing: NetworkCommandError.message(
-                                message.isEmpty ? "networksetup failed (\(process.terminationStatus))" : message
-                            )
-                        )
-                    }
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-}
-
-enum NetworkCommandError: LocalizedError {
-    case message(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .message(let value):
-            return value
-        }
-    }
 }

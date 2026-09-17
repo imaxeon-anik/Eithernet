@@ -4,20 +4,23 @@ import SwiftUI
 struct EithernetApp: App {
     @StateObject private var networkManager = NetworkInterfaceManager()
     @StateObject private var wifiManager = WiFiManager()
+    @StateObject private var panelState = MenuBarPanelState()
+    @StateObject private var settingsLaunchState = SettingsLaunchState()
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarView(networkManager: networkManager, wifiManager: wifiManager)
+            MenuBarView(
+                networkManager: networkManager,
+                wifiManager: wifiManager,
+                panelState: panelState
+            )
         } label: {
-            Image(nsImage: networkManager.statusIcon.nsImage)
-                .renderingMode(.template)
-                .frame(width: 20, height: 20)
-                .accessibilityLabel("Eithernet")
+            MenuBarLabelView(networkManager: networkManager)
         }
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(networkManager: networkManager)
+            SettingsView(networkManager: networkManager, launchState: settingsLaunchState)
         }
     }
 }

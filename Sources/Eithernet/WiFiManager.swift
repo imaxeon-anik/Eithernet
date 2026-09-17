@@ -2,6 +2,13 @@ import CoreLocation
 import CoreWLAN
 import Foundation
 
+/// Serializes CoreWLAN scans (panel refresh, connect, forget, auto-join).
+private actor WLANScanGate {
+    func perform<T: Sendable>(_ operation: @Sendable () async throws -> T) async rethrows -> T {
+        try await operation()
+    }
+}
+
 @MainActor
 final class WiFiManager: NSObject, ObservableObject {
     @Published var networks: [WiFiNetwork] = []
@@ -12,28 +19,92 @@ final class WiFiManager: NSObject, ObservableObject {
     @Published var statusMessage: String?
     @Published var locationDenied = false
     @Published var pendingPasswordSSID: String?
+    @Published var isForgetting = false
+    @Published var isUpdatingAutoJoin = false
+    /// `nil` when the current SSID isn’t in the saved (preferred) network list.
+    @Published var currentAutoJoinEnabled: Bool?
 
     private let locationManager = CLLocationManager()
     private var didRequestLocation = false
+    private var panelRefreshInFlight = false
+    /// Latest radio state requested while a panel refresh was already running.
+    private var pendingPanelWifiRadioOn: Bool?
+    /// Bumped when a panel refresh runs; used to skip redundant post-toggle fallbacks.
+    private var panelRefreshGeneration = 0
+    private let wlanScanGate = WLANScanGate()
+
+    /// True when macOS allows CoreWLAN to scan (Location permission granted).
+    var canScanForNetworks: Bool {
+        switch locationManager.authorizationStatus {
+        case .authorized, .authorizedAlways:
+            return true
+        default:
+            return false
+        }
+    }
 
     override init() {
         super.init()
         locationManager.delegate = self
+        let wifiClient = CWWiFiClient.shared()
+        wifiClient.delegate = self
+        try? wifiClient.startMonitoringEvent(with: .powerDidChange)
     }
 
-    func prepareAndScan() {
+    /// CoreWLAN radio state (matches Control Center / in-app toggle after power events).
+    static func wiFiRadioOn() -> Bool {
+        CWWiFiClient.shared().interface()?.powerOn() ?? false
+    }
+
+    /// Scan for the menu panel: respects radio state, skips until Location is granted, retries once if empty.
+    func refreshNetworksForPanel(wifiRadioOn: Bool) async {
+        if panelRefreshInFlight {
+            pendingPanelWifiRadioOn = wifiRadioOn
+            return
+        }
+        panelRefreshInFlight = true
+        panelRefreshGeneration += 1
+        defer {
+            panelRefreshInFlight = false
+            if let pending = pendingPanelWifiRadioOn {
+                pendingPanelWifiRadioOn = nil
+                Task { await refreshNetworksForPanel(wifiRadioOn: pending) }
+            }
+        }
+
         ensureLocationAccess()
-        scan()
+
+        if !wifiRadioOn {
+            networks = []
+            currentSSID = nil
+            currentIPv4 = nil
+            currentAutoJoinEnabled = nil
+            return
+        }
+
+        guard canScanForNetworks else { return }
+
+        await scanAsync()
+        guard networks.isEmpty, canScanForNetworks, !locationDenied else { return }
+
+        try? await Task.sleep(for: .seconds(1.5))
+        await scanAsync(clearStatusOnSuccess: false)
     }
 
-    func scan() {
+    /// If CoreWLAN doesn’t emit a power event after `networksetup`, refresh the open panel once.
+    func scheduleDeferredPanelRefreshIfVisible(_ panelVisible: Bool) {
+        guard panelVisible else { return }
+        let snapshot = panelRefreshGeneration
         Task {
-            await scanAsync()
+            try? await Task.sleep(for: .milliseconds(400))
+            guard snapshot == panelRefreshGeneration else { return }
+            await refreshNetworksForPanel(wifiRadioOn: Self.wiFiRadioOn())
         }
     }
 
     func connect(to network: WiFiNetwork) {
         if network.isCurrent { return }
+        guard !isConnecting, !isForgetting, !isUpdatingAutoJoin else { return }
 
         if network.isSecure {
             pendingPasswordSSID = network.ssid
@@ -47,6 +118,7 @@ final class WiFiManager: NSObject, ObservableObject {
 
     func connectWithPassword(_ password: String) {
         guard let ssid = pendingPasswordSSID else { return }
+        guard !isConnecting, !isForgetting, !isUpdatingAutoJoin else { return }
         pendingPasswordSSID = nil
         Task {
             await connectAsync(ssid: ssid, password: password)
@@ -55,6 +127,20 @@ final class WiFiManager: NSObject, ObservableObject {
 
     func cancelPasswordPrompt() {
         pendingPasswordSSID = nil
+    }
+
+    func forgetNetwork(_ ssid: String, device: String? = nil) {
+        guard !isConnecting, !isForgetting, !isUpdatingAutoJoin else { return }
+        Task {
+            await forgetNetworkAsync(ssid: ssid, device: device)
+        }
+    }
+
+    func setAutoJoin(_ enabled: Bool, for ssid: String) {
+        guard !isConnecting, !isForgetting, !isUpdatingAutoJoin else { return }
+        Task {
+            await setAutoJoinAsync(enabled: enabled, ssid: ssid)
+        }
     }
 
     private func ensureLocationAccess() {
@@ -75,41 +161,94 @@ final class WiFiManager: NSObject, ObservableObject {
         }
     }
 
-    private func scanAsync() async {
+    private func scanAsync(clearStatusOnSuccess: Bool = true) async {
+        ensureLocationAccess()
+        guard canScanForNetworks, !locationDenied else { return }
+
         isScanning = true
         defer { isScanning = false }
 
         do {
-            let result = try await Task.detached(priority: .userInitiated) {
-                try Self.scanNetworks()
-            }.value
+            let result = try await wlanScanGate.perform {
+                try await Task.detached(priority: .userInitiated) {
+                    try Self.scanNetworks()
+                }.value
+            }
             currentSSID = result.currentSSID
             currentIPv4 = result.ipv4
+            currentAutoJoinEnabled = result.currentAutoJoinEnabled
             networks = result.networks
-            if locationDenied == false {
+            if locationDenied == false, clearStatusOnSuccess {
                 statusMessage = nil
             }
         } catch {
             statusMessage = error.localizedDescription
             networks = []
             currentIPv4 = nil
+            currentAutoJoinEnabled = nil
+        }
+    }
+
+    private func setAutoJoinAsync(enabled: Bool, ssid: String) async {
+        isUpdatingAutoJoin = true
+        statusMessage = enabled
+            ? "Enabling auto‑join for “\(ssid)”…"
+            : "Disabling auto‑join for “\(ssid)”…"
+        defer { isUpdatingAutoJoin = false }
+
+        do {
+            try await wlanScanGate.perform {
+                try await Task.detached(priority: .userInitiated) {
+                    try WiFiConfiguration.setAutoJoinEnabled(enabled, for: ssid)
+                }.value
+            }
+            await scanAsync(clearStatusOnSuccess: false)
+            let applied = currentAutoJoinEnabled ?? enabled
+            statusMessage = applied
+                ? "Will auto‑join “\(ssid)”"
+                : "Won’t auto‑join “\(ssid)”"
+        } catch {
+            await scanAsync(clearStatusOnSuccess: false)
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    private func forgetNetworkAsync(ssid: String, device: String?) async {
+        isForgetting = true
+        statusMessage = "Forgetting “\(ssid)”…"
+        defer { isForgetting = false }
+
+        do {
+            try await wlanScanGate.perform {
+                try await Task.detached(priority: .userInitiated) {
+                    try Self.removePreferredNetwork(ssid: ssid, device: device)
+                }.value
+            }
+            await scanAsync(clearStatusOnSuccess: false)
+            statusMessage = "Forgot “\(ssid)”"
+        } catch {
+            await scanAsync(clearStatusOnSuccess: false)
+            statusMessage = error.localizedDescription
         }
     }
 
     private func connectAsync(ssid: String, password: String?) async {
+        guard !isForgetting else { return }
         isConnecting = true
         statusMessage = "Connecting to \(ssid)…"
         defer { isConnecting = false }
 
         do {
-            try await Task.detached(priority: .userInitiated) {
-                try Self.associate(ssid: ssid, password: password)
-            }.value
+            try await wlanScanGate.perform {
+                try await Task.detached(priority: .userInitiated) {
+                    try Self.associate(ssid: ssid, password: password)
+                }.value
+            }
+            await scanAsync(clearStatusOnSuccess: false)
             statusMessage = "Connected to \(ssid)"
-            await scanAsync()
         } catch {
+            await scanAsync(clearStatusOnSuccess: false)
             statusMessage = error.localizedDescription
-            await scanAsync()
         }
     }
 
@@ -123,6 +262,7 @@ final class WiFiManager: NSObject, ObservableObject {
     nonisolated private static func scanNetworks() throws -> (
         currentSSID: String?,
         ipv4: String?,
+        currentAutoJoinEnabled: Bool?,
         networks: [WiFiNetwork]
     ) {
         let interface = try wifiInterface()
@@ -158,7 +298,27 @@ final class WiFiManager: NSObject, ObservableObject {
             return lhs.ssid.localizedCaseInsensitiveCompare(rhs.ssid) == .orderedAscending
         }
 
-        return (current, ipv4, networks)
+        let autoJoin = current.flatMap { try? WiFiConfiguration.autoJoinEnabled(for: $0) }
+
+        return (current, ipv4, autoJoin, networks)
+    }
+
+    nonisolated private static func removePreferredNetwork(ssid: String, device: String?) throws {
+        let interface = try wifiInterface()
+        let deviceName = device ?? interface.interfaceName
+        guard let deviceName, !deviceName.isEmpty else {
+            throw NetworkCommandError.message("No Wi‑Fi device name.")
+        }
+
+        if interface.ssid() == ssid {
+            interface.disassociate()
+        }
+
+        _ = try runNetworkSetupSync([
+            "-removepreferredwirelessnetwork",
+            deviceName,
+            ssid,
+        ])
     }
 
     nonisolated private static func associate(ssid: String, password: String?) throws {
@@ -178,6 +338,16 @@ final class WiFiManager: NSObject, ObservableObject {
     }
 }
 
+extension WiFiManager: CWEventDelegate {
+    nonisolated func powerStateDidChangeForWiFiInterface(withName interfaceName: String) {
+        Task { @MainActor in
+            NotificationCenter.default.post(name: .eithernetRequestInterfaceRefresh, object: nil)
+            let wifiOn = CWWiFiClient.shared().interface()?.powerOn() ?? false
+            await refreshNetworksForPanel(wifiRadioOn: wifiOn)
+        }
+    }
+}
+
 extension WiFiManager: CLLocationManagerDelegate {
     nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         let status = manager.authorizationStatus
@@ -190,7 +360,9 @@ extension WiFiManager: CLLocationManagerDelegate {
         switch status {
         case .authorized, .authorizedAlways:
             locationDenied = false
-            scan()
+            Task {
+                await refreshNetworksForPanel(wifiRadioOn: Self.wiFiRadioOn())
+            }
         case .denied, .restricted:
             locationDenied = true
             statusMessage = "Location access is required to list Wi‑Fi networks."

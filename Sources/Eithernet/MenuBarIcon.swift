@@ -2,47 +2,101 @@ import AppKit
 import SwiftUI
 
 enum MenuBarIcon: String {
-    case both = "menubar-both"
-    case wired = "menubar-wired"
-    case wireless = "menubar-wireless"
-    case off = "menubar-off"
+    case both
+    case wired
+    case wireless
+    case off
 
-    /// Menu-bar status items optically sit around 18pt; we use 20pt so custom
-    /// glyphs match neighboring SF Symbol weight/size.
-    private static let pointSize = NSSize(width: 20, height: 20)
+    /// Menu-bar status items optically sit around 18pt; we use 20pt to match SF Symbol weight.
+    private static let pointSize: CGFloat = 20
+    private static let squareSize = NSSize(width: pointSize, height: pointSize)
+    /// Side-by-side composite needs extra width so cable + Wi‑Fi don’t overlap in the tray.
+    private static let bothSize = NSSize(width: 30, height: pointSize)
+
+    /// Space reserved in the menu bar (must match rendered image aspect ratio).
+    var traySize: NSSize {
+        switch self {
+        case .both: return Self.bothSize
+        default: return Self.squareSize
+        }
+    }
 
     var nsImage: NSImage {
-        if let cached = NSImage(named: rawValue) {
-            return prepared(cached)
-        }
+        prepared(render())
+    }
 
-        let url =
-            Bundle.module.url(forResource: "\(rawValue)@2x", withExtension: "png")
-            ?? Bundle.module.url(forResource: rawValue, withExtension: "png")
-
-        if let url, let image = NSImage(contentsOf: url) {
-            return prepared(image)
-        }
-
-        let symbolName: String
+    private var symbolName: String? {
         switch self {
-        case .both: symbolName = "cable.connector"
-        case .wired: symbolName = "cable.connector"
-        case .wireless: symbolName = "wifi"
-        case .off: symbolName = "wifi.slash"
+        case .wired: return "cable.connector"
+        case .wireless: return "dot.radiowaves.left.and.right"
+        case .off: return "network.slash"
+        case .both: return nil
         }
-        let fallback = NSImage(
-            systemSymbolName: symbolName,
-            accessibilityDescription: "Eithernet"
-        ) ?? NSImage()
-        return prepared(fallback)
+    }
+
+    private func render() -> NSImage {
+        if self == .both {
+            return Self.compositeBothImage()
+        }
+        guard let symbolName,
+              let image = Self.symbolImage(named: symbolName, pointSize: Self.pointSize)
+        else {
+            return NSImage(size: Self.squareSize)
+        }
+        return image
+    }
+
+    private static func symbolImage(named name: String, pointSize: CGFloat) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+        guard let base = NSImage(systemSymbolName: name, accessibilityDescription: "Eithernet") else {
+            return nil
+        }
+        return base.withSymbolConfiguration(config)
+    }
+
+    /// Cable left, radiowaves right — wide canvas, no overlap.
+    private static func compositeBothImage() -> NSImage {
+        let canvas = bothSize
+        let symbolHeight = pointSize * 0.82
+        let left = symbolImage(named: "cable.connector", pointSize: symbolHeight * 0.95)
+        let right = symbolImage(named: "dot.radiowaves.left.and.right", pointSize: symbolHeight * 0.88)
+
+        let image = NSImage(size: canvas)
+        image.lockFocus()
+        NSColor.clear.set()
+        NSRect(origin: .zero, size: canvas).fill()
+
+        let verticalInset = (canvas.height - symbolHeight) / 2
+        let leftWidth = canvas.width * 0.38
+        let rightWidth = canvas.width * 0.58
+        let gap = canvas.width - leftWidth - rightWidth
+
+        left?.draw(
+            in: NSRect(x: 0, y: verticalInset, width: leftWidth, height: symbolHeight),
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1
+        )
+        right?.draw(
+            in: NSRect(
+                x: leftWidth + gap,
+                y: verticalInset,
+                width: rightWidth,
+                height: symbolHeight
+            ),
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1
+        )
+        image.unlockFocus()
+        return image
     }
 
     private func prepared(_ image: NSImage) -> NSImage {
-        // Copy so we never mutate a shared/cached instance into the wrong size.
+        let size = traySize
         let copy = image.copy() as? NSImage ?? image
         copy.isTemplate = true
-        copy.size = Self.pointSize
+        copy.size = size
         copy.resizingMode = .stretch
         if copy.name() == nil {
             copy.setName(rawValue)

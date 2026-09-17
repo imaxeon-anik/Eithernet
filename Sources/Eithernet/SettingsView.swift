@@ -2,8 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var networkManager: NetworkInterfaceManager
-    @State private var launchAtLogin = LaunchAtLogin.isEnabled
-    @State private var launchAtLoginMessage: String?
+    @ObservedObject var launchState: SettingsLaunchState
 
     var body: some View {
         Form {
@@ -17,7 +16,7 @@ struct SettingsView: View {
                         LaunchAtLogin.openLoginItemsSettings()
                     }
                 }
-                if let launchAtLoginMessage {
+                if let launchAtLoginMessage = launchState.launchAtLoginMessage {
                     Text(launchAtLoginMessage)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -55,24 +54,24 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 400, height: 340)
         .onAppear {
-            launchAtLogin = LaunchAtLogin.isEnabled
+            launchState.syncFromSystem()
             networkManager.refresh()
         }
     }
 
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
-            get: { launchAtLogin },
+            get: { launchState.launchAtLogin },
             set: { newValue in
                 do {
                     try LaunchAtLogin.setEnabled(newValue)
-                    launchAtLogin = LaunchAtLogin.isEnabled
-                    launchAtLoginMessage = LaunchAtLogin.needsApproval
+                    launchState.launchAtLogin = LaunchAtLogin.isEnabled
+                    launchState.launchAtLoginMessage = LaunchAtLogin.needsApproval
                         ? "Turned on — approve Eithernet under Login Items if prompted."
                         : nil
                 } catch {
-                    launchAtLogin = LaunchAtLogin.isEnabled
-                    launchAtLoginMessage = error.localizedDescription
+                    launchState.launchAtLogin = LaunchAtLogin.isEnabled
+                    launchState.launchAtLoginMessage = error.localizedDescription
                 }
             }
         )
