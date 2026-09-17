@@ -286,6 +286,13 @@ struct MenuBarView: View {
         wifiManager.isConnecting || wifiManager.isForgetting || wifiManager.isUpdatingAutoJoin
     }
 
+    /// `.destructive` + plain often renders as primary text on the glass panel.
+    private var forgetNetworkLabelColor: Color {
+        networkRowInteractionDisabled
+            ? Color(nsColor: .systemRed).opacity(0.45)
+            : Color(nsColor: .systemRed)
+    }
+
     @ViewBuilder
     private func networkListRow(_ network: WiFiNetwork) -> some View {
         HStack(spacing: 4) {
@@ -364,10 +371,15 @@ struct MenuBarView: View {
                     Text("Forget This Network")
                         .font(.callout)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                        .padding(.vertical, 7)
+                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .foregroundStyle(forgetNetworkLabelColor)
                 .disabled(networkRowInteractionDisabled)
+                .accessibilityHint(
+                    "Removes this network from saved networks and deletes the stored password"
+                )
             } else {
                 Text("This network isn’t saved on your Mac. Joining with a password will add it to saved networks.")
                     .font(.caption)
