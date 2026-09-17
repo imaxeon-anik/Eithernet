@@ -12,15 +12,12 @@ struct EithernetApp: App {
             MenuBarView(
                 networkManager: networkManager,
                 wifiManager: wifiManager,
-                panelState: panelState
+                panelState: panelState,
+                launchState: settingsLaunchState
             )
         } label: {
             MenuBarLabelView(networkManager: networkManager)
         }
         .menuBarExtraStyle(.window)
-
-        Settings {
-            SettingsView(networkManager: networkManager, launchState: settingsLaunchState)
-        }
     }
 }

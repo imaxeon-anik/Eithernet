@@ -5,6 +5,7 @@ struct MenuBarView: View {
     @ObservedObject var networkManager: NetworkInterfaceManager
     @ObservedObject var wifiManager: WiFiManager
     @ObservedObject var panelState: MenuBarPanelState
+    @ObservedObject var launchState: SettingsLaunchState
 
     private let panelWidth: CGFloat = 320
     private let networkListHeight: CGFloat = 200
@@ -90,10 +91,12 @@ struct MenuBarView: View {
                 }
                 .buttonStyle(.plain)
 
-                SettingsLink {
+                Button(action: openEithernetSettings) {
                     settingsCell(title: "Eithernet Settings…", systemImage: "gearshape")
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(",")
+                .help("Eithernet Settings")
             }
 
             HStack(spacing: 8) {
@@ -126,40 +129,23 @@ struct MenuBarView: View {
         .frame(width: panelWidth)
         .fixedSize(horizontal: false, vertical: true)
         .background(GlassBackdrop())
+        .compositingGroup()
         .clipShape(RoundedRectangle(cornerRadius: MenuBarPanelMetrics.cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: MenuBarPanelMetrics.cornerRadius, style: .continuous)
                 .strokeBorder(.white.opacity(0.20), lineWidth: 0.8)
         )
-        .background(MenuBarPanelWindowRounding())
-        // Keep toggles usable while a join is in flight; only block network rows.
-        .confirmationDialog(
-            "Forget this network?",
-            isPresented: Binding(
-                get: { panelState.ssidPendingForget != nil },
-                set: { if !$0 { panelState.ssidPendingForget = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: panelState.ssidPendingForget
-        ) { ssid in
-            Button("Forget “\(ssid)”", role: .destructive) {
-                let device = networkManager.wirelessInterfaces.first?.device
-                wifiManager.forgetNetwork(ssid, device: device)
-                panelState.ssidPendingForget = nil
-                panelState.networkDetailSSID = nil
-            }
-            Button("Cancel", role: .cancel) {
-                panelState.ssidPendingForget = nil
-            }
-        } message: { ssid in
-            Text(
-                "Removes “\(ssid)” from saved networks and deletes the stored password. You’ll need to enter the password again to rejoin."
-            )
-        }
+        .background(MenuBarPanelWindowRounding(layoutGeneration: panelChromeLayoutToken))
         .onChange(of: wifiManager.currentSSID) { _, newSSID in
             guard let detail = panelState.networkDetailSSID else { return }
             if detail != newSSID {
+                panelState.ssidPendingForget = nil
                 panelState.networkDetailSSID = nil
+            }
+        }
+        .onChange(of: panelState.networkDetailSSID) { _, newDetail in
+            if newDetail != panelState.ssidPendingForget {
+                panelState.ssidPendingForget = nil
             }
         }
         .onChange(of: wifiManager.isUpdatingAutoJoin) { _, updating in
@@ -180,6 +166,7 @@ struct MenuBarView: View {
         }
         .onDisappear {
             panelState.isMenuPanelVisible = false
+            panelState.ssidPendingForget = nil
         }
     }
 
@@ -215,6 +202,20 @@ struct MenuBarView: View {
                     .controlSize(.small)
             }
         }
+    }
+
+    /// Changes when panel height / mode changes so AppKit window rounding re-syncs with SwiftUI clip.
+    private var panelChromeLayoutToken: Int {
+        var hasher = Hasher()
+        hasher.combine(panelState.networkDetailSSID)
+        hasher.combine(panelState.ssidPendingForget)
+        hasher.combine(wifiManager.pendingPasswordSSID)
+        hasher.combine(wifiManager.networks.count)
+        hasher.combine(wifiManager.locationDenied)
+        hasher.combine(wifiManager.isScanning)
+        hasher.combine(networkManager.statusMessage)
+        hasher.combine(wifiManager.statusMessage)
+        return hasher.finalize()
     }
 
     private var subtitle: String {
@@ -280,6 +281,7 @@ struct MenuBarView: View {
             .scrollIndicators(.visible)
             .frame(height: networkListHeight)
             .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
     }
 
@@ -330,6 +332,7 @@ struct MenuBarView: View {
 
     private var networkDetailBackButton: some View {
         Button {
+            panelState.ssidPendingForget = nil
             panelState.networkDetailSSID = nil
         } label: {
             HStack(spacing: 2) {
@@ -366,21 +369,25 @@ struct MenuBarView: View {
                 Divider()
                     .padding(.vertical, 2)
 
-                Button(role: .destructive) {
-                    panelState.ssidPendingForget = ssid
-                } label: {
-                    Text("Forget This Network")
-                        .font(.callout)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 7)
-                        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                if panelState.ssidPendingForget == ssid {
+                    forgetNetworkConfirmation(for: ssid)
+                } else {
+                    Button(role: .destructive) {
+                        panelState.ssidPendingForget = ssid
+                    } label: {
+                        Text("Forget This Network")
+                            .font(.callout)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 7)
+                            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(forgetNetworkLabelColor)
+                    .disabled(networkRowInteractionDisabled)
+                    .accessibilityHint(
+                        "Removes this network from saved networks and deletes the stored password"
+                    )
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(forgetNetworkLabelColor)
-                .disabled(networkRowInteractionDisabled)
-                .accessibilityHint(
-                    "Removes this network from saved networks and deletes the stored password"
-                )
             } else {
                 Text("This network isn’t saved on your Mac. Joining with a password will add it to saved networks.")
                     .font(.caption)
@@ -508,6 +515,51 @@ struct MenuBarView: View {
         let value = panelState.password
         panelState.password = ""
         wifiManager.connectWithPassword(value)
+    }
+
+    private func forgetNetworkConfirmation(for ssid: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Forget this network?")
+                .font(.callout.weight(.semibold))
+            Text(
+                "Removes “\(ssid)” from saved networks and deletes the stored password. You’ll need to enter the password again to rejoin."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Button("Cancel") {
+                    panelState.ssidPendingForget = nil
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("Forget “\(ssid)”") {
+                    let device = networkManager.wirelessInterfaces.first?.device
+                    wifiManager.forgetNetwork(ssid, device: device)
+                    panelState.ssidPendingForget = nil
+                    panelState.networkDetailSSID = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(forgetNetworkLabelColor)
+                .disabled(networkRowInteractionDisabled)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
+        )
+    }
+
+    private func openEithernetSettings() {
+        SettingsWindowController.shared.show(
+            networkManager: networkManager,
+            launchState: launchState
+        )
     }
 
     private func openWiFiSettings() {

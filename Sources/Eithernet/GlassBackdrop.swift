@@ -6,35 +6,27 @@ enum MenuBarPanelMetrics {
     static let cornerRadius: CGFloat = 16
 }
 
-/// Vibrancy backdrop for the menu-bar panel.
+/// Vibrancy backdrop for the menu-bar panel (outer clip is SwiftUI + `MenuBarPanelWindowRounding`).
 struct GlassBackdrop: NSViewRepresentable {
-    var cornerRadius: CGFloat = MenuBarPanelMetrics.cornerRadius
-
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = .hudWindow
         view.blendingMode = .behindWindow
         view.state = .active
-        applyCornerRadius(to: view)
+        view.wantsLayer = true
         return view
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
         nsView.state = .active
-        applyCornerRadius(to: nsView)
-    }
-
-    private func applyCornerRadius(to view: NSVisualEffectView) {
-        view.wantsLayer = true
-        view.layer?.cornerRadius = cornerRadius
-        view.layer?.cornerCurve = .continuous
-        view.layer?.masksToBounds = true
     }
 }
 
 /// Rounds the `MenuBarExtra` window. SwiftUI `clipShape` alone cannot round the AppKit window chrome.
 struct MenuBarPanelWindowRounding: NSViewRepresentable {
     var cornerRadius: CGFloat = MenuBarPanelMetrics.cornerRadius
+    /// Bumped when panel content height changes so AppKit rounding stays aligned with SwiftUI clip.
+    var layoutGeneration: Int = 0
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -42,7 +34,7 @@ struct MenuBarPanelWindowRounding: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
-        scheduleApply(from: view, coordinator: context.coordinator)
+        scheduleApply(from: view, coordinator: context.coordinator, layoutGeneration: layoutGeneration)
         return view
     }
 
@@ -51,15 +43,25 @@ struct MenuBarPanelWindowRounding: NSViewRepresentable {
         if coordinator.shouldRetry(anchor: nsView) {
             coordinator.reset()
         }
-        guard coordinator.needsApply(cornerRadius: cornerRadius, anchor: nsView) else { return }
-        scheduleApply(from: nsView, coordinator: coordinator)
+        guard coordinator.needsApply(
+            cornerRadius: cornerRadius,
+            layoutGeneration: layoutGeneration,
+            anchor: nsView
+        ) else { return }
+        scheduleApply(from: nsView, coordinator: coordinator, layoutGeneration: layoutGeneration)
     }
 
-    private func scheduleApply(from anchor: NSView, coordinator: Coordinator, attempt: Int = 0) {
+    private func scheduleApply(
+        from anchor: NSView,
+        coordinator: Coordinator,
+        layoutGeneration: Int,
+        attempt: Int = 0
+    ) {
         DispatchQueue.main.async {
             if let window = anchor.window, let contentView = window.contentView {
                 let installed = Self.applyRounding(
                     cornerRadius: cornerRadius,
+                    layoutGeneration: layoutGeneration,
                     window: window,
                     contentView: contentView,
                     coordinator: coordinator
@@ -71,7 +73,12 @@ struct MenuBarPanelWindowRounding: NSViewRepresentable {
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-                scheduleApply(from: anchor, coordinator: coordinator, attempt: attempt + 1)
+                scheduleApply(
+                    from: anchor,
+                    coordinator: coordinator,
+                    layoutGeneration: layoutGeneration,
+                    attempt: attempt + 1
+                )
             }
         }
     }
@@ -79,6 +86,7 @@ struct MenuBarPanelWindowRounding: NSViewRepresentable {
     @discardableResult
     private static func applyRounding(
         cornerRadius: CGFloat,
+        layoutGeneration: Int,
         window: NSWindow,
         contentView: NSView,
         coordinator: Coordinator
@@ -87,11 +95,11 @@ struct MenuBarPanelWindowRounding: NSViewRepresentable {
         window.backgroundColor = .clear
         window.hasShadow = false
 
-        contentView.wantsLayer = true
-        contentView.layer?.cornerRadius = cornerRadius
-        contentView.layer?.cornerCurve = .continuous
-        contentView.layer?.masksToBounds = true
         contentView.layer?.backgroundColor = .clear
+        applyCornerMask(to: contentView, cornerRadius: cornerRadius)
+        for subview in contentView.subviews {
+            applyCornerMask(to: subview, cornerRadius: cornerRadius)
+        }
 
         guard let shadowView = installShadow(on: contentView, cornerRadius: cornerRadius) else {
             return false
@@ -103,9 +111,18 @@ struct MenuBarPanelWindowRounding: NSViewRepresentable {
 
         coordinator.configuredWindow = window
         coordinator.configuredRadius = cornerRadius
+        coordinator.configuredContentSize = contentView.bounds.size
+        coordinator.configuredLayoutGeneration = layoutGeneration
         coordinator.shadowInstalled = true
         coordinator.gaveUp = false
         return true
+    }
+
+    private static func applyCornerMask(to view: NSView, cornerRadius: CGFloat) {
+        view.wantsLayer = true
+        view.layer?.cornerRadius = cornerRadius
+        view.layer?.cornerCurve = .continuous
+        view.layer?.masksToBounds = true
     }
 
     @discardableResult
@@ -148,12 +165,16 @@ struct MenuBarPanelWindowRounding: NSViewRepresentable {
     final class Coordinator {
         weak var configuredWindow: NSWindow?
         var configuredRadius: CGFloat = -1
+        var configuredContentSize: CGSize = .zero
+        var configuredLayoutGeneration = -1
         var shadowInstalled = false
         var gaveUp = false
 
         func reset() {
             configuredWindow = nil
             configuredRadius = -1
+            configuredContentSize = .zero
+            configuredLayoutGeneration = -1
             shadowInstalled = false
             gaveUp = false
         }
@@ -166,11 +187,18 @@ struct MenuBarPanelWindowRounding: NSViewRepresentable {
             gaveUp && anchor.window != nil
         }
 
-        func needsApply(cornerRadius: CGFloat, anchor: NSView) -> Bool {
+        func needsApply(cornerRadius: CGFloat, layoutGeneration: Int, anchor: NSView) -> Bool {
+            if gaveUp, anchor.window != nil {
+                gaveUp = false
+            }
             if gaveUp { return false }
             guard let window = anchor.window else { return true }
+            let contentSize = window.contentView?.bounds.size ?? .zero
             if !shadowInstalled { return true }
-            return configuredWindow !== window || configuredRadius != cornerRadius
+            if configuredWindow !== window || configuredRadius != cornerRadius { return true }
+            if configuredLayoutGeneration != layoutGeneration { return true }
+            if configuredContentSize != contentSize { return true }
+            return false
         }
     }
 }
