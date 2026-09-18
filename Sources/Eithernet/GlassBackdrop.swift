@@ -162,6 +162,7 @@ struct MenuBarPanelWindowRounding: NSViewRepresentable {
         return shadowView
     }
 
+    @MainActor
     final class Coordinator {
         weak var configuredWindow: NSWindow?
         var configuredRadius: CGFloat = -1
