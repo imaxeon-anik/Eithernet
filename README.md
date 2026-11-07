@@ -103,12 +103,13 @@ The workflow lives at `.github/workflows/release.yml`. Builds are unsigned; see 
 
 ## Usage
 
-1. Click the Eithernet icon in the menu bar (state changes with wired / wireless / both / off).
+1. Click the Eithernet icon in the menu bar (tray icon: wired, wireless, both, or off).
 2. Under **Wired**, toggle any Ethernet / LAN adapters.
 3. Under **Wireless**, toggle Wi‑Fi power and tap a network name to join it.
-4. Check the header for connected SSID and IPv4.
-5. Use **Wi‑Fi Settings…** or **Eithernet Settings…** for system Wi‑Fi prefs and app options (including Launch at Login).
-6. Use **Refresh** to rescan interfaces and nearby SSIDs.
+4. On the **connected** network row, tap **ⓘ** for details: **auto‑join** and **Forget This Network**.
+5. Check the header for connected SSID and IPv4.
+6. Use **Wi‑Fi Settings…** or **Eithernet Settings…** for system Wi‑Fi prefs and app options (including Launch at Login).
+7. Use **Refresh** (↻) to rescan interfaces and nearby SSIDs.
 
 ## Launch at Login
 
