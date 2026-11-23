@@ -6,6 +6,8 @@ struct WiFiNetwork: Identifiable, Equatable, Sendable {
     let rssi: Int
     let isSecure: Bool
     let isCurrent: Bool
+    /// In macOS's saved (preferred) networks, so its credentials are already stored by the system.
+    var isSaved: Bool = false
 
     var signalBars: Int {
         // Rough mapping for UI bars (0...3)

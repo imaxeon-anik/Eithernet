@@ -103,25 +103,23 @@ struct MenuBarView: View {
                 Button {
                     Task { await refreshInterfacesAndPanelNetworks() }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                        .labelStyle(.iconOnly)
+                    footerLabel(
+                        title: "Refresh",
+                        systemImage: "arrow.clockwise",
+                        shortcut: "⌘R"
+                    )
                 }
+                .buttonStyle(PanelFooterButtonStyle())
                 .keyboardShortcut("r")
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Refresh")
-
-                Spacer()
+                .help("Rescan networks and interfaces")
 
                 Button {
                     NSApplication.shared.terminate(nil)
                 } label: {
-                    Label("Quit", systemImage: "power")
-                        .labelStyle(.iconOnly)
+                    footerLabel(title: "Quit", systemImage: "power", shortcut: "⌘Q")
                 }
+                .buttonStyle(PanelFooterButtonStyle(hoverTint: Color(nsColor: .systemRed)))
                 .keyboardShortcut("q")
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 .help("Quit Eithernet")
             }
         }
@@ -305,7 +303,9 @@ struct MenuBarView: View {
                 networkRow(network)
             }
             .buttonStyle(.plain)
-            .disabled(network.isCurrent || networkRowInteractionDisabled)
+            // Don't `.disabled` the current row: SwiftUI dims disabled content, making the active network look inactive.
+            .allowsHitTesting(!network.isCurrent)
+            .disabled(networkRowInteractionDisabled)
 
             if network.isCurrent {
                 Button {
@@ -450,6 +450,7 @@ struct MenuBarView: View {
 
             Text(network.ssid)
                 .lineLimit(1)
+                .fontWeight(network.isCurrent ? .semibold : .regular)
                 .foregroundStyle(.primary)
 
             Spacer(minLength: 4)
@@ -575,6 +576,24 @@ struct MenuBarView: View {
         }
     }
 
+    private func footerLabel(
+        title: String,
+        systemImage: String,
+        shortcut: String
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+                .frame(width: 14)
+            Text(title)
+                .font(.caption)
+            Spacer(minLength: 0)
+            Text(shortcut)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
     private func settingsCell(title: String, systemImage: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: systemImage)
@@ -600,4 +619,54 @@ struct MenuBarView: View {
                 .fill(.white.opacity(0.06))
         )
     }
+}
+
+/// Glass pill for the panel footer: matches the settings cells, brightens on hover/press.
+private struct PanelFooterButtonStyle: ButtonStyle {
+    var hoverTint: Color? = nil
+
+    func makeBody(configuration: Configuration) -> some View {
+        FooterButton(configuration: configuration, hoverTint: hoverTint)
+    }
+
+    private struct FooterButton: View {
+        let configuration: ButtonStyleConfiguration
+        let hoverTint: Color?
+        // `@State` needs the SwiftUI macro plugin, which the CommandLineTools toolchain lacks; `@StateObject` doesn't.
+        @StateObject private var hover = HoverState()
+        private var isHovering: Bool { hover.isHovering }
+        @Environment(\.isEnabled) private var isEnabled
+
+        var body: some View {
+            let tint = isHovering ? hoverTint : nil
+            configuration.label
+                .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.primary))
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, minHeight: 30)
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill((tint ?? .white).opacity(fillOpacity))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(.white.opacity(isHovering ? 0.14 : 0.06), lineWidth: 0.5)
+                )
+                .scaleEffect(configuration.isPressed ? 0.97 : 1)
+                .opacity(isEnabled ? 1 : 0.45)
+                .animation(.easeOut(duration: 0.12), value: isHovering)
+                .animation(.easeOut(duration: 0.08), value: configuration.isPressed)
+                .onHover { hover.isHovering = $0 }
+        }
+
+        private var fillOpacity: Double {
+            if configuration.isPressed { return 0.16 }
+            return isHovering ? 0.11 : 0.06
+        }
+    }
+}
+
+@MainActor
+private final class HoverState: ObservableObject {
+    @Published var isHovering = false
 }

@@ -106,13 +106,15 @@ final class WiFiManager: NSObject, ObservableObject {
         if network.isCurrent { return }
         guard !isConnecting, !isForgetting, !isUpdatingAutoJoin else { return }
 
-        if network.isSecure {
+        if network.isSecure && !network.isSaved {
             pendingPasswordSSID = network.ssid
             return
         }
 
+        // Saved secure networks: let macOS use its stored credentials; ask for a password only if that fails.
+        let promptOnFailure = network.isSecure
         Task {
-            await connectAsync(ssid: network.ssid, password: nil)
+            await connectAsync(ssid: network.ssid, password: nil, promptForPasswordOnFailure: promptOnFailure)
         }
     }
 
@@ -232,7 +234,11 @@ final class WiFiManager: NSObject, ObservableObject {
         }
     }
 
-    private func connectAsync(ssid: String, password: String?) async {
+    private func connectAsync(
+        ssid: String,
+        password: String?,
+        promptForPasswordOnFailure: Bool = false
+    ) async {
         guard !isForgetting else { return }
         isConnecting = true
         statusMessage = "Connecting to \(ssid)…"
@@ -246,6 +252,15 @@ final class WiFiManager: NSObject, ObservableObject {
             }
             await scanAsync(clearStatusOnSuccess: false)
             statusMessage = "Connected to \(ssid)"
+        } catch let joinError as JoinError {
+            await scanAsync(clearStatusOnSuccess: false)
+            if promptForPasswordOnFailure, joinError.isCredentialFailure {
+                statusMessage = "Couldn’t join “\(ssid)” with the saved password. Enter it again."
+                    + joinError.rejoinSuffix
+                pendingPasswordSSID = ssid
+            } else {
+                statusMessage = joinError.message(usedPassword: password != nil)
+            }
         } catch {
             await scanAsync(clearStatusOnSuccess: false)
             statusMessage = error.localizedDescription
@@ -283,13 +298,21 @@ final class WiFiManager: NSObject, ObservableObject {
             }
         }
 
+        var savedSSIDs = Set<String>()
+        if let profiles = interface.configuration()?.networkProfiles {
+            for case let profile as CWNetworkProfile in profiles {
+                if let ssid = profile.ssid { savedSSIDs.insert(ssid) }
+            }
+        }
+
         let networks = bySSID.values.map { network -> WiFiNetwork in
             let ssid = network.ssid ?? "Unknown"
             return WiFiNetwork(
                 ssid: ssid,
                 rssi: network.rssiValue,
                 isSecure: network.supportsSecurity(.none) == false,
-                isCurrent: ssid == current
+                isCurrent: ssid == current,
+                isSaved: savedSSIDs.contains(ssid)
             )
         }
         .sorted { lhs, rhs in
@@ -323,18 +346,101 @@ final class WiFiManager: NSObject, ObservableObject {
 
     nonisolated private static func associate(ssid: String, password: String?) throws {
         let interface = try wifiInterface()
-        let scanned = try interface.scanForNetworks(withName: ssid)
+        let previousSSID = interface.ssid()
+
+        let scanned: Set<CWNetwork>
+        do {
+            scanned = try interface.scanForNetworks(withName: ssid)
+        } catch {
+            throw JoinError(ssid: ssid, kind: .other(error.localizedDescription), rejoinedSSID: nil)
+        }
         guard let target = scanned.first(where: { $0.ssid == ssid }) ?? scanned.first else {
-            throw NetworkCommandError.message("Network “\(ssid)” not found.")
+            throw JoinError(ssid: ssid, kind: .notFound, rejoinedSSID: nil)
         }
 
         do {
             try interface.associate(to: target, password: password)
         } catch {
-            throw NetworkCommandError.message(
-                "Couldn’t connect to “\(ssid)”. Check the password or try again."
-            )
+            // Associating drops the current network first; try to get back onto it.
+            let rejoined = rejoinPrevious(previousSSID, failedSSID: ssid, on: interface)
+            throw JoinError(ssid: ssid, kind: JoinError.Kind(associationError: error), rejoinedSSID: rejoined)
         }
+    }
+
+    /// Best-effort return to the network that was active before a failed join. Returns its SSID if connected.
+    nonisolated private static func rejoinPrevious(
+        _ previousSSID: String?,
+        failedSSID: String,
+        on interface: CWInterface
+    ) -> String? {
+        guard let previousSSID, !previousSSID.isEmpty, previousSSID != failedSSID else { return nil }
+        if interface.ssid() == previousSSID { return previousSSID }
+        guard
+            let scanned = try? interface.scanForNetworks(withName: previousSSID),
+            let network = scanned.first(where: { $0.ssid == previousSSID })
+        else { return nil }
+        // No password: relies on macOS's stored credentials for the previously joined network.
+        guard (try? interface.associate(to: network, password: nil)) != nil else { return nil }
+        return interface.ssid() == previousSSID ? previousSSID : nil
+    }
+}
+
+/// Why a join attempt failed, classified so the UI only re-prompts for a password when that could help.
+private struct JoinError: Error {
+    enum Kind {
+        case notFound
+        case credentials
+        case other(String)
+
+        /// CoreWLAN codes that typically mean missing/wrong credentials. A wrong WPA password often
+        /// surfaces as a (supplicant) timeout rather than a distinct auth error, so timeouts count too.
+        private static let credentialCodes: Set<Int> = [
+            1, // kCWEAPOLErr
+            -3900, // kCWInvalidParameterErr (e.g. no stored credential)
+            -3905, // kCWTimeoutErr
+            -3910, // kCWAuthenticationAlgorithmUnsupportedErr
+            -3911, // kCWInvalidAuthenticationSequenceNumberErr
+            -3912, // kCWChallengeFailureErr
+            -3924, // kCWInvalidPMKErr
+            -3925, // kCWSupplicantTimeoutErr
+        ]
+
+        init(associationError error: Error) {
+            let nsError = error as NSError
+            if nsError.domain == CWErrorDomain, Self.credentialCodes.contains(nsError.code) {
+                self = .credentials
+            } else {
+                self = .other(nsError.localizedDescription)
+            }
+        }
+    }
+
+    let ssid: String
+    let kind: Kind
+    let rejoinedSSID: String?
+
+    var isCredentialFailure: Bool {
+        if case .credentials = kind { return true }
+        return false
+    }
+
+    var rejoinSuffix: String {
+        rejoinedSSID.map { " Reconnected to “\($0)”." } ?? ""
+    }
+
+    func message(usedPassword: Bool) -> String {
+        let base: String
+        switch kind {
+        case .notFound:
+            base = "“\(ssid)” is out of range or no longer visible."
+        case .credentials:
+            base = usedPassword
+                ? "Couldn’t connect to “\(ssid)”. Check the password and try again."
+                : "Couldn’t connect to “\(ssid)”."
+        case .other(let detail):
+            base = "Couldn’t connect to “\(ssid)”. \(detail)"
+        }
+        return base + rejoinSuffix
     }
 }
 
