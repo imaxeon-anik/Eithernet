@@ -82,7 +82,8 @@ struct MenuBarView: View {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
             }
 
             HStack(spacing: 8) {
@@ -134,6 +135,7 @@ struct MenuBarView: View {
                 .strokeBorder(.white.opacity(0.20), lineWidth: 0.8)
         )
         .background(MenuBarPanelWindowRounding(layoutGeneration: panelChromeLayoutToken))
+        .background(PanelOpenObserver { panelOpened() })
         .onChange(of: wifiManager.currentSSID) { _, newSSID in
             guard let detail = panelState.networkDetailSSID else { return }
             if detail != newSSID {
@@ -160,12 +162,24 @@ struct MenuBarView: View {
             // MenuBarExtra windows dismiss easily if the app isn’t active.
             NSApp.activate(ignoringOtherApps: true)
             panelState.isMenuPanelVisible = true
-            Task { await refreshInterfacesAndPanelNetworks() }
+            panelOpened()
         }
         .onDisappear {
             panelState.isMenuPanelVisible = false
             panelState.ssidPendingForget = nil
         }
+    }
+
+    /// Refreshes wired interfaces and rescans Wi‑Fi each time the panel opens (like the system Wi‑Fi
+    /// menu). Both `onAppear` and the window-key observer call this, so collapse near-duplicates, and
+    /// leave an in-progress join alone so its status isn't overwritten.
+    private func panelOpened() {
+        panelState.isMenuPanelVisible = true
+        let now = Date()
+        if let last = panelState.lastOpenRefresh, now.timeIntervalSince(last) < 1 { return }
+        guard !wifiManager.isConnecting else { return }
+        panelState.lastOpenRefresh = now
+        Task { await refreshInterfacesAndPanelNetworks() }
     }
 
     private func refreshInterfacesAndPanelNetworks() async {
