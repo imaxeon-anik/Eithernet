@@ -49,6 +49,27 @@ final class WiFiManager: NSObject, ObservableObject {
         let wifiClient = CWWiFiClient.shared()
         wifiClient.delegate = self
         try? wifiClient.startMonitoringEvent(with: .powerDidChange)
+        // macOS can join/leave networks on its own (auto-join after a failed join, Instant Hotspot),
+        // so follow SSID/link changes rather than trusting the last scan.
+        try? wifiClient.startMonitoringEvent(with: .ssidDidChange)
+        try? wifiClient.startMonitoringEvent(with: .linkDidChange)
+    }
+
+    /// Updates the current network, IP and checkmark from the interface without scanning (scans are
+    /// slow and can hit EBUSY). Skipped mid-join; the join does its own refresh when it finishes.
+    func syncCurrentNetwork() {
+        guard !isConnecting, !isForgetting, let interface = CWWiFiClient.shared().interface() else { return }
+        let ssid = interface.ssid()
+        currentSSID = ssid
+        currentIPv4 = interface.interfaceName.flatMap { NetworkAddress.ipv4(for: $0) }
+        currentAutoJoinEnabled = ssid.flatMap { try? WiFiConfiguration.autoJoinEnabled(for: $0) }
+        networks = networks
+            .map { network in
+                var network = network
+                network.isCurrent = network.ssid == ssid
+                return network
+            }
+            .sorted { lhs, rhs in lhs.isCurrent && !rhs.isCurrent }
     }
 
     /// CoreWLAN radio state (matches Control Center / in-app toggle after power events).
@@ -350,21 +371,49 @@ final class WiFiManager: NSObject, ObservableObject {
 
         let scanned: Set<CWNetwork>
         do {
-            scanned = try interface.scanForNetworks(withName: ssid)
+            scanned = try retryingWhenBusy { try interface.scanForNetworks(withName: ssid) }
         } catch {
-            throw JoinError(ssid: ssid, kind: .other(error.localizedDescription), rejoinedSSID: nil)
+            throw JoinError(ssid: ssid, kind: .other(JoinError.Kind.describe(error as NSError)), rejoinedSSID: nil)
         }
         guard let target = scanned.first(where: { $0.ssid == ssid }) ?? scanned.first else {
             throw JoinError(ssid: ssid, kind: .notFound, rejoinedSSID: nil)
         }
 
         do {
-            try interface.associate(to: target, password: password)
+            try retryingWhenBusy { try interface.associate(to: target, password: password) }
         } catch {
             // Associating drops the current network first; try to get back onto it.
             let rejoined = rejoinPrevious(previousSSID, failedSSID: ssid, on: interface)
             throw JoinError(ssid: ssid, kind: JoinError.Kind(associationError: error), rejoinedSSID: rejoined)
         }
+    }
+
+    /// Retries a CoreWLAN call that fails with EBUSY ("Resource busy"), which happens when the Wi‑Fi
+    /// driver is mid-scan (our panel scan, or macOS's own, e.g. Instant Hotspot discovery). Other
+    /// errors are thrown immediately.
+    nonisolated private static func retryingWhenBusy<T>(
+        attempts: Int = 4,
+        initialDelay: TimeInterval = 0.75,
+        _ operation: () throws -> T
+    ) throws -> T {
+        var delay = initialDelay
+        for attempt in 1...attempts {
+            do {
+                return try operation()
+            } catch let error as NSError where Self.isBusy(error) && attempt < attempts {
+                Thread.sleep(forTimeInterval: delay)
+                delay *= 2
+            }
+        }
+        preconditionFailure("unreachable: last attempt either returns or throws")
+    }
+
+    nonisolated private static func isBusy(_ error: NSError) -> Bool {
+        if error.domain == NSPOSIXErrorDomain, error.code == Int(EBUSY) { return true }
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return isBusy(underlying)
+        }
+        return false
     }
 
     /// Best-effort return to the network that was active before a failed join. Returns its SSID if connected.
@@ -376,7 +425,7 @@ final class WiFiManager: NSObject, ObservableObject {
         guard let previousSSID, !previousSSID.isEmpty, previousSSID != failedSSID else { return nil }
         if interface.ssid() == previousSSID { return previousSSID }
         guard
-            let scanned = try? interface.scanForNetworks(withName: previousSSID),
+            let scanned = try? retryingWhenBusy({ try interface.scanForNetworks(withName: previousSSID) }),
             let network = scanned.first(where: { $0.ssid == previousSSID })
         else { return nil }
         // No password: relies on macOS's stored credentials for the previously joined network.
@@ -410,8 +459,24 @@ private struct JoinError: Error {
             if nsError.domain == CWErrorDomain, Self.credentialCodes.contains(nsError.code) {
                 self = .credentials
             } else {
-                self = .other(nsError.localizedDescription)
+                self = .other(Self.describe(nsError))
             }
+        }
+
+        /// CoreWLAN often returns bare, unhelpful text (e.g. "tmpErr"), so include domain and code.
+        static func describe(_ error: NSError) -> String {
+            let domain: String
+            switch error.domain {
+            case CWErrorDomain: domain = "CoreWLAN"
+            case NSPOSIXErrorDomain: domain = "POSIX"
+            case NSOSStatusErrorDomain: domain = "OSStatus"
+            default: domain = error.domain
+            }
+            var text = "\(error.localizedDescription) (\(domain) \(error.code))"
+            if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+                text += " ← \(underlying.domain) \(underlying.code)"
+            }
+            return text
         }
     }
 
@@ -445,6 +510,24 @@ private struct JoinError: Error {
 }
 
 extension WiFiManager: CWEventDelegate {
+    nonisolated func ssidDidChangeForWiFiInterface(withName interfaceName: String) {
+        Task { @MainActor in handleWiFiLinkChange() }
+    }
+
+    nonisolated func linkDidChangeForWiFiInterface(withName interfaceName: String) {
+        Task { @MainActor in handleWiFiLinkChange() }
+    }
+
+    private func handleWiFiLinkChange() {
+        NotificationCenter.default.post(name: .eithernetRequestInterfaceRefresh, object: nil)
+        syncCurrentNetwork()
+        // DHCP usually lands a moment after the link comes up; pick up the IP then.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            self?.syncCurrentNetwork()
+        }
+    }
+
     nonisolated func powerStateDidChangeForWiFiInterface(withName interfaceName: String) {
         Task { @MainActor in
             NotificationCenter.default.post(name: .eithernetRequestInterfaceRefresh, object: nil)

@@ -5,7 +5,7 @@ struct WiFiNetwork: Identifiable, Equatable, Sendable {
     let ssid: String
     let rssi: Int
     let isSecure: Bool
-    let isCurrent: Bool
+    var isCurrent: Bool
     /// In macOS's saved (preferred) networks, so its credentials are already stored by the system.
     var isSaved: Bool = false
 

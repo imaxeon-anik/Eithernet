@@ -12,6 +12,8 @@ final class MenuBarPanelState: ObservableObject {
     @Published var isMenuPanelVisible = false
     /// Inline forget confirmation (AppKit sheets mis-anchor on MenuBarExtra windows).
     @Published var ssidPendingForget: String?
+    /// When the panel last triggered an open-time refresh (de-dupes onAppear + window-key events).
+    var lastOpenRefresh: Date?
 
     func syncDetailAutoJoin(from wifi: WiFiManager) {
         detailAutoJoinEnabled = wifi.currentAutoJoinEnabled ?? false
